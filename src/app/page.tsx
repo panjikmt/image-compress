@@ -25,7 +25,6 @@ import type { ImageRecord } from "@/lib/storage";
 import {
   UploadCloud,
   Image as ImageIcon,
-  Sparkles,
   Download,
   Trash2,
   PackageCheck,
@@ -231,13 +230,17 @@ export default function Home() {
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Sparkles className="h-5 w-5" />
-            </div>
+            <img
+              src="/logo.webp"
+              alt="kompres.web.id logo"
+              width={36}
+              height={36}
+              className="h-9 w-9 rounded-lg"
+            />
             <div className="leading-tight">
-              <h1 className="text-base font-semibold tracking-tight">
-                TinyForge
-              </h1>
+              <span className="text-base font-semibold tracking-tight">
+                kompres<span className="text-muted-foreground">.web.id</span>
+              </span>
               <p className="text-[11px] text-muted-foreground hidden sm:block">
                 Compress &amp; convert images in your browser
               </p>
@@ -272,12 +275,13 @@ export default function Home() {
       <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-6 sm:py-10">
         {/* Hero */}
         <section className="text-center mb-8 sm:mb-10">
-          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
-            Smart image compression
-          </h2>
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
+            Compress &amp; convert images in your browser
+          </h1>
           <p className="mt-2 text-muted-foreground max-w-xl mx-auto">
-            Drag &amp; drop your images anywhere on this page. Convert and
-            compress to PNG, JPG, WebP or BMP — everything stays in your browser.
+            Drag &amp; drop to compress and convert images to PNG, JPG, WebP,
+            AVIF, BMP and more. Everything runs locally on your device — fast,
+            free, and 100% private.
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
             <Button
@@ -488,7 +492,7 @@ export default function Home() {
       <footer className="mt-auto border-t bg-background">
         <div className="mx-auto max-w-6xl px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
           <p>
-            TinyForge · All processing happens locally in your browser.
+            kompres.web.id · All processing happens locally in your browser.
           </p>
           <p>
             Files are stored in your device&apos;s browser storage (IndexedDB).
