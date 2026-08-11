@@ -81,10 +81,10 @@ async function decodeHeic(file: Blob): Promise<ImageBitmap> {
 // ---- SVG decoding ---------------------------------------------------------
 
 // SVGs frequently declare no fixed pixel size — width/height are "auto",
-// percentages, or missing entirely, and only a viewBox is present. We resolve a
-// concrete raster size from whatever information is available so the vector can
-// be drawn deterministically.
-const SVG_DEFAULT_RENDER_SIZE = 1024; // px, used when no size info exists
+// percentages, or missing — and often carry only a viewBox. SVG is vector, so
+// we rasterize at a consistent default height of 1080px and derive the width
+// automatically from the source SVG's aspect ratio.
+const SVG_DEFAULT_RENDER_HEIGHT = 1080; // px — default raster height for SVGs
 const SVG_MAX_RENDER_SIZE = 4096; // safety cap on the longest raster side
 
 function parseSvgLength(value: string | null): number | null {
@@ -115,54 +115,48 @@ function capRasterSize({
   };
 }
 
-// Resolve the pixel size to rasterize an SVG at, defaulting to "auto":
-//   - explicit width & height (px)     -> use them
-//   - one side auto / percentage        -> derive the other from the viewBox ratio
-//   - both sides auto but has viewBox   -> use the viewBox dimensions
-//   - no usable size info at all        -> square default
+// Resolve the pixel size to rasterize an SVG at. The default is height =
+// 1080px with the width auto-derived from the source SVG's aspect ratio
+// (explicit width/height if both are in px, otherwise the viewBox). Falls back
+// to a square 1080x1080 when no aspect ratio can be determined. The longest
+// side is capped at SVG_MAX_RENDER_SIZE for memory safety (only affects extreme
+// aspect ratios, e.g. ultra-wide panoramas).
 export async function getSvgRasterSize(
   file: Blob
 ): Promise<{ width: number; height: number }> {
-  let width: number | null = null;
-  let height: number | null = null;
-  let viewBox: [number, number] | null = null; // [vbWidth, vbHeight]
+  let ratio: number | null = null; // width / height
 
   try {
     const text = await file.text();
     const doc = new DOMParser().parseFromString(text, "image/svg+xml");
     const svg = doc.documentElement;
     if (svg && svg.tagName.toLowerCase() === "svg") {
-      width = parseSvgLength(svg.getAttribute("width"));
-      height = parseSvgLength(svg.getAttribute("height"));
-      const vb = svg.getAttribute("viewBox");
-      if (vb) {
-        const parts = vb.trim().split(/[\s,]+/).map(Number);
-        if (
-          parts.length === 4 &&
-          parts.every((n) => Number.isFinite(n)) &&
-          parts[2] > 0 &&
-          parts[3] > 0
-        ) {
-          viewBox = [parts[2], parts[3]];
+      const w = parseSvgLength(svg.getAttribute("width"));
+      const h = parseSvgLength(svg.getAttribute("height"));
+      if (w && h) {
+        ratio = w / h;
+      } else {
+        const vb = svg.getAttribute("viewBox");
+        if (vb) {
+          const parts = vb.trim().split(/[\s,]+/).map(Number);
+          if (
+            parts.length === 4 &&
+            parts.every((n) => Number.isFinite(n)) &&
+            parts[2] > 0 &&
+            parts[3] > 0
+          ) {
+            ratio = parts[2] / parts[3];
+          }
         }
       }
     }
   } catch {
-    // Malformed/empty SVG — fall through to the defaults below.
+    // Malformed/empty SVG — fall back to the square default below.
   }
 
-  const ratio = viewBox ? viewBox[0] / viewBox[1] : 1;
-
-  if (width && height) return capRasterSize({ width, height });
-  if (width && !height)
-    return capRasterSize({ width, height: Math.round(width / ratio) });
-  if (height && !width)
-    return capRasterSize({ width: Math.round(height * ratio), height });
-  if (viewBox) return capRasterSize({ width: viewBox[0], height: viewBox[1] });
-  return capRasterSize({
-    width: SVG_DEFAULT_RENDER_SIZE,
-    height: SVG_DEFAULT_RENDER_SIZE,
-  });
+  const height = SVG_DEFAULT_RENDER_HEIGHT;
+  const width = ratio ? Math.max(1, Math.round(height * ratio)) : height;
+  return capRasterSize({ width, height });
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
