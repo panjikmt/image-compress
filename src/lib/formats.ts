@@ -9,6 +9,7 @@ export type ImageFormat =
   | "heic"
   | "avif"
   | "gif"
+  | "svg"
   | "ico";
 
 export interface FormatInfo {
@@ -97,6 +98,15 @@ export const FORMATS: FormatInfo[] = [
     canDecode: true,
     canEncode: false,
     description: "Animated/limited-color format (decode only).",
+  },
+  {
+    id: "svg",
+    label: "SVG",
+    extensions: ["svg"],
+    mimeType: "image/svg+xml",
+    canDecode: true,
+    canEncode: false, // vector source only — rasterized on import
+    description: "Vector format (source only — rasterized to a bitmap on import).",
   },
   {
     id: "ico",

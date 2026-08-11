@@ -4,6 +4,7 @@
 //   - Native Canvas/createImageBitmap for PNG/JPG/WebP/BMP/GIF/AVIF
 //   - UTIF for TIFF
 //   - heic2any for HEIC/HEIF
+//   - <img> + Canvas rasterization for SVG (handles "auto" sizes via viewBox)
 //
 // Encoding:
 //   - Canvas.toBlob for PNG/JPEG/WebP
@@ -77,6 +78,124 @@ async function decodeHeic(file: Blob): Promise<ImageBitmap> {
   return await createImageBitmap(pngBlob);
 }
 
+// ---- SVG decoding ---------------------------------------------------------
+
+// SVGs frequently declare no fixed pixel size — width/height are "auto",
+// percentages, or missing entirely, and only a viewBox is present. We resolve a
+// concrete raster size from whatever information is available so the vector can
+// be drawn deterministically.
+const SVG_DEFAULT_RENDER_SIZE = 1024; // px, used when no size info exists
+const SVG_MAX_RENDER_SIZE = 4096; // safety cap on the longest raster side
+
+function parseSvgLength(value: string | null): number | null {
+  // Percentages and keywords like "auto" carry no intrinsic pixel size.
+  if (!value || value.includes("%")) return null;
+  const n = parseFloat(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function capRasterSize({
+  width,
+  height,
+}: {
+  width: number;
+  height: number;
+}): { width: number; height: number } {
+  const longest = Math.max(width, height);
+  let w = width;
+  let h = height;
+  if (longest > SVG_MAX_RENDER_SIZE) {
+    const scale = SVG_MAX_RENDER_SIZE / longest;
+    w *= scale;
+    h *= scale;
+  }
+  return {
+    width: Math.max(1, Math.round(w)),
+    height: Math.max(1, Math.round(h)),
+  };
+}
+
+// Resolve the pixel size to rasterize an SVG at, defaulting to "auto":
+//   - explicit width & height (px)     -> use them
+//   - one side auto / percentage        -> derive the other from the viewBox ratio
+//   - both sides auto but has viewBox   -> use the viewBox dimensions
+//   - no usable size info at all        -> square default
+export async function getSvgRasterSize(
+  file: Blob
+): Promise<{ width: number; height: number }> {
+  let width: number | null = null;
+  let height: number | null = null;
+  let viewBox: [number, number] | null = null; // [vbWidth, vbHeight]
+
+  try {
+    const text = await file.text();
+    const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+    const svg = doc.documentElement;
+    if (svg && svg.tagName.toLowerCase() === "svg") {
+      width = parseSvgLength(svg.getAttribute("width"));
+      height = parseSvgLength(svg.getAttribute("height"));
+      const vb = svg.getAttribute("viewBox");
+      if (vb) {
+        const parts = vb.trim().split(/[\s,]+/).map(Number);
+        if (
+          parts.length === 4 &&
+          parts.every((n) => Number.isFinite(n)) &&
+          parts[2] > 0 &&
+          parts[3] > 0
+        ) {
+          viewBox = [parts[2], parts[3]];
+        }
+      }
+    }
+  } catch {
+    // Malformed/empty SVG — fall through to the defaults below.
+  }
+
+  const ratio = viewBox ? viewBox[0] / viewBox[1] : 1;
+
+  if (width && height) return capRasterSize({ width, height });
+  if (width && !height)
+    return capRasterSize({ width, height: Math.round(width / ratio) });
+  if (height && !width)
+    return capRasterSize({ width: Math.round(height * ratio), height });
+  if (viewBox) return capRasterSize({ width: viewBox[0], height: viewBox[1] });
+  return capRasterSize({
+    width: SVG_DEFAULT_RENDER_SIZE,
+    height: SVG_DEFAULT_RENDER_SIZE,
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Failed to load SVG"));
+    img.src = src;
+  });
+}
+
+async function decodeSvg(file: Blob): Promise<ImageBitmap> {
+  // Rasterize via an <img> at the resolved size. Specifying the destination
+  // width/height in drawImage lets browsers render unsized ("auto") SVGs
+  // deterministically using their viewBox.
+  const { width, height } = await getSvgRasterSize(file);
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, width, height);
+    return await createImageBitmap(canvas);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export async function decodeImage(
   file: Blob,
   format: ImageFormat
@@ -86,6 +205,8 @@ export async function decodeImage(
       return await decodeTiff(file);
     case "heic":
       return await decodeHeic(file);
+    case "svg":
+      return await decodeSvg(file);
     default:
       return await decodeNative(file);
   }
@@ -294,6 +415,8 @@ export async function getImageDimensions(
   blob: Blob,
   format: ImageFormat
 ): Promise<{ width: number; height: number }> {
+  // SVG has no inherent pixel size; parse the markup instead of rasterizing.
+  if (format === "svg") return await getSvgRasterSize(blob);
   const bitmap = await decodeImage(blob, format);
   const dims = { width: bitmap.width, height: bitmap.height };
   if (typeof bitmap.close === "function") bitmap.close();
