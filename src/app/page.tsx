@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useImageLibrary } from "@/hooks/use-image-library";
 import { DropOverlay } from "@/components/compressor/drop-overlay";
 import { FormatControls } from "@/components/compressor/format-controls";
@@ -113,6 +114,7 @@ export default function Home() {
         quality: compression,
         maxWidthOrHeight: maxDimNumber,
       });
+      if (!rec) return; // source was already busy with another conversion
       toast({
         title: `Converted to ${getFormat(target).label}`,
         description: `${rec.name}.${getFormat(target).extensions[0]} · ${formatFileSize(
@@ -495,7 +497,13 @@ export default function Home() {
             kompres.web.id · All processing happens locally in your browser.
           </p>
           <p>
-            Files are stored in your device&apos;s browser storage (IndexedDB).
+            Files are stored in your device&apos;s browser storage (IndexedDB).{" "}
+            <Link
+              href="/privacy-policy"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Privacy Policy
+            </Link>
           </p>
         </div>
       </footer>
