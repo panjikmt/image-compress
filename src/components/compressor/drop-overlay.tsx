@@ -72,7 +72,7 @@ export function DropOverlay({ onFiles }: DropOverlayProps) {
           <div>
             <p className="text-lg font-semibold">Drop your images</p>
             <p className="text-sm text-muted-foreground">
-              PNG, JPG, WebP, BMP, TIFF, HEIC, AVIF, GIF
+              PNG, JPG, WebP, BMP, TIFF, HEIC, AVIF, GIF, SVG, ICO
             </p>
           </div>
         </div>

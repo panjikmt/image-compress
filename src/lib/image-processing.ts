@@ -5,10 +5,12 @@
 //   - UTIF for TIFF
 //   - heic2any for HEIC/HEIF
 //   - <img> + Canvas rasterization for SVG (handles "auto" sizes via viewBox)
+//     and ICO (all browsers render ICO in <img>, picking the largest entry)
 //
 // Encoding:
 //   - Canvas.toBlob for PNG/JPEG/WebP
 //   - Manual BMP encoder (canvas doesn't expose image/bmp)
+//   - Manual ICO encoder (multi-size container with PNG entries, 16–256px)
 //
 // Compression strategy (TinyPNG-like):
 //   - JPEG/WebP: configurable quality (default 0.8, "balanced")
@@ -164,7 +166,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     const img = new Image();
     img.decoding = "async";
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Failed to load SVG"));
+    img.onerror = () => reject(new Error("Failed to load image"));
     img.src = src;
   });
 }
@@ -190,6 +192,54 @@ async function decodeSvg(file: Blob): Promise<ImageBitmap> {
   }
 }
 
+// ---- ICO decoding ---------------------------------------------------------
+
+// An ICO is a 6-byte ICONDIR followed by 16-byte directory entries:
+//   [0..1] reserved, [2..3] type (1 = icon), [4..5] entry count
+// Each entry starts with 1-byte width and height where 0 means 256.
+// Reading the largest entry's dimensions avoids a full decode.
+export async function getIcoDimensions(
+  file: Blob
+): Promise<{ width: number; height: number }> {
+  const buffer = await file.arrayBuffer();
+  if (buffer.byteLength < 8) throw new Error("ICO: file too small");
+  const view = new DataView(buffer);
+  const count = view.getUint16(4, true);
+  if (count === 0) throw new Error("ICO: no images found");
+
+  let best = { width: 0, height: 0 };
+  for (let i = 0; i < count; i++) {
+    const entry = 6 + i * 16;
+    if (entry + 2 > buffer.byteLength) break;
+    const w = view.getUint8(entry) || 256;
+    const h = view.getUint8(entry + 1) || 256;
+    if (w * h > best.width * best.height) best = { width: w, height: h };
+  }
+  if (best.width === 0 || best.height === 0) {
+    throw new Error("ICO: no readable directory entries");
+  }
+  return best;
+}
+
+async function decodeIco(file: Blob): Promise<ImageBitmap> {
+  // All browsers render ICO in <img> (choosing the largest entry for the
+  // intrinsic size), which is more compatible than createImageBitmap here.
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0);
+    return await createImageBitmap(canvas);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export async function decodeImage(
   file: Blob,
   format: ImageFormat
@@ -201,6 +251,8 @@ export async function decodeImage(
       return await decodeHeic(file);
     case "svg":
       return await decodeSvg(file);
+    case "ico":
+      return await decodeIco(file);
     default:
       return await decodeNative(file);
   }
@@ -311,6 +363,74 @@ function canvasToBlob(
   });
 }
 
+// ---- ICO encoding (no browser encoder; build the container manually) ------
+
+// Sizes packed into the generated icon, smallest to largest. Entries are
+// PNG-compressed (supported by Windows Vista+ and all modern browsers), so
+// quality settings don't apply — the PNG encoder is lossless.
+const ICO_SIZES = [16, 32, 48, 64, 128, 256];
+
+async function encodeIco(source: HTMLCanvasElement): Promise<Blob> {
+  // Only downscale: skip sizes larger than the source, and never exceed the
+  // 256px per-side ICO limit.
+  const longest = Math.max(source.width, source.height);
+  const sizes = ICO_SIZES.filter((s) => s <= longest);
+  if (sizes.length === 0) {
+    // Tiny source (< 16px): pack it at its own size so the file stays valid.
+    sizes.push(Math.max(1, Math.min(longest, 256)));
+  }
+
+  // Render + PNG-encode each size, preserving the source aspect ratio.
+  const entries: { blob: Blob; width: number; height: number }[] = [];
+  for (const size of sizes) {
+    const scale = size / longest;
+    const w = Math.max(1, Math.round(source.width * scale));
+    const h = Math.max(1, Math.round(source.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(source, 0, 0, w, h);
+    const blob = await canvasToBlob(canvas, "image/png");
+    entries.push({ blob, width: w, height: h });
+  }
+
+  // ICONDIR (6 bytes) + one 16-byte ICONDIRENTRY per image, then the blobs.
+  const headerSize = 6 + entries.length * 16;
+  const totalSize = headerSize + entries.reduce((s, e) => s + e.blob.size, 0);
+  const buffer = new ArrayBuffer(totalSize);
+  const view = new DataView(buffer);
+
+  view.setUint16(0, 0, true); // reserved
+  view.setUint16(2, 1, true); // type: 1 = icon
+  view.setUint16(4, entries.length, true);
+
+  let offset = headerSize;
+  entries.forEach((entry, i) => {
+    const at = 6 + i * 16;
+    view.setUint8(at, entry.width >= 256 ? 0 : entry.width); // 0 means 256
+    view.setUint8(at + 1, entry.height >= 256 ? 0 : entry.height);
+    view.setUint8(at + 2, 0); // color palette count
+    view.setUint8(at + 3, 0); // reserved
+    view.setUint16(at + 4, 1, true); // color planes
+    view.setUint16(at + 6, 32, true); // bits per pixel
+    view.setUint32(at + 8, entry.blob.size, true); // image size in bytes
+    view.setUint32(at + 12, offset, true); // offset from file start
+    offset += entry.blob.size;
+  });
+
+  const bytes = new Uint8Array(buffer);
+  let pos = headerSize;
+  for (const entry of entries) {
+    bytes.set(new Uint8Array(await entry.blob.arrayBuffer()), pos);
+    pos += entry.blob.size;
+  }
+
+  return new Blob([buffer], { type: "image/x-icon" });
+}
+
 export async function encodeImage(
   source: HTMLCanvasElement | ImageBitmap,
   format: ImageFormat,
@@ -339,7 +459,7 @@ export async function encodeImage(
   ctx.imageSmoothingQuality = "high";
 
   const formatInfo = getFormat(format);
-  const hasAlpha = format === "png" || format === "webp";
+  const hasAlpha = format === "png" || format === "webp" || format === "ico";
 
   if (!hasAlpha) {
     // Flatten alpha onto background for formats without transparency.
@@ -373,6 +493,10 @@ export async function encodeImage(
       );
     case "bmp":
       return encodeBmp(canvas, options.backgroundColor ?? "#ffffff");
+    case "ico":
+      // Entries are PNG-compressed and lossless; quality/max-dimension are
+      // applied above (canvas) and sizes are capped at 256px inside encodeIco.
+      return await encodeIco(canvas);
     default:
       throw new Error(
         `Encoding to ${formatInfo.label} is not supported in the browser.`
@@ -411,6 +535,8 @@ export async function getImageDimensions(
 ): Promise<{ width: number; height: number }> {
   // SVG has no inherent pixel size; parse the markup instead of rasterizing.
   if (format === "svg") return await getSvgRasterSize(blob);
+  // ICO directory entries carry explicit dimensions; read them directly.
+  if (format === "ico") return await getIcoDimensions(blob);
   const bitmap = await decodeImage(blob, format);
   const dims = { width: bitmap.width, height: bitmap.height };
   if (typeof bitmap.close === "function") bitmap.close();

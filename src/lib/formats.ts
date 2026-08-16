@@ -23,9 +23,11 @@ export interface FormatInfo {
 }
 
 // Master list of supported formats.
-// Decode support relies on native Canvas + UTIF (TIFF) + heic2any (HEIC).
-// Encode support relies on Canvas.toBlob (PNG/JPEG/WebP/BMP) — others have no
-// reliable browser encoder, so we expose them as decode-only.
+// Decode support relies on native Canvas + UTIF (TIFF) + heic2any (HEIC) +
+// <img> rasterization for SVG/ICO.
+// Encode support relies on Canvas.toBlob (PNG/JPEG/WebP), a manual BMP encoder
+// and a manual multi-size ICO encoder — others have no reliable browser
+// encoder, so we expose them as decode-only.
 export const FORMATS: FormatInfo[] = [
   {
     id: "png",
@@ -113,9 +115,10 @@ export const FORMATS: FormatInfo[] = [
     label: "ICO",
     extensions: ["ico"],
     mimeType: "image/x-icon",
-    canDecode: false,
-    canEncode: false,
-    description: "Windows icon format (limited support).",
+    canDecode: true,
+    canEncode: true,
+    description:
+      "Windows icon / favicon format (multi-size, up to 256×256 per entry).",
   },
 ];
 

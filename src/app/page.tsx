@@ -97,7 +97,7 @@ export default function Home() {
     } else {
       toast({
         title: "No supported images found",
-        description: "Drop PNG, JPG, WebP, BMP, TIFF, HEIC, AVIF, GIF or SVG.",
+        description: "Drop PNG, JPG, WebP, BMP, TIFF, HEIC, AVIF, GIF, SVG or ICO.",
         variant: "destructive",
       });
     }
@@ -316,7 +316,7 @@ export default function Home() {
               Drop images here or click to browse
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Supports PNG, JPG, WebP, BMP, TIFF, HEIC, AVIF, GIF, SVG
+              Supports PNG, JPG, WebP, BMP, TIFF, HEIC, AVIF, GIF, SVG, ICO
             </p>
           </button>
         ) : (
